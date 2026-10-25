@@ -1,0 +1,771 @@
+--========================================================
+-- QUILTAB | SMART GAME & PLAYER DASHBOARD
+-- Single LocalScript | Roblox Luau
+--========================================================
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Stats = game:GetService("Stats")
+local Workspace = game:GetService("Workspace")
+
+local LP = Players.LocalPlayer
+local PG = LP:WaitForChild("PlayerGui")
+
+local old = PG:FindFirstChild("QuilTab")
+if old then old:Destroy() end
+
+local C = {
+    bg = Color3.fromRGB(12,12,15),
+    panel = Color3.fromRGB(22,22,28),
+    card = Color3.fromRGB(32,32,40),
+    red = Color3.fromRGB(150,25,48),
+    bright = Color3.fromRGB(220,45,70),
+    white = Color3.fromRGB(245,245,248),
+    muted = Color3.fromRGB(160,160,174),
+    green = Color3.fromRGB(70,210,130),
+    yellow = Color3.fromRGB(245,190,65)
+}
+
+local selectedPlayer
+local playerRows = {}
+local espTags = {}
+local espEnabled = false
+local infiniteJump = false
+local previousPosition
+local history = {}
+local fps = 0
+local frameCount = 0
+local frameTime = 0
+local alive = true
+
+local function make(class, parent, props)
+    local obj = Instance.new(class)
+    for k,v in pairs(props or {}) do
+        obj[k] = v
+    end
+    obj.Parent = parent
+    return obj
+end
+
+local function round(obj, radius)
+    make("UICorner", obj, {
+        CornerRadius = UDim.new(0, radius or 9)
+    })
+end
+
+local function label(parent, value, size, pos, fontSize, color)
+    return make("TextLabel", parent, {
+        BackgroundTransparency = 1,
+        Size = size,
+        Position = pos,
+        Text = value,
+        TextColor3 = color or C.white,
+        Font = Enum.Font.Gotham,
+        TextSize = fontSize or 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+        TextWrapped = true
+    })
+end
+
+local function button(parent, value, size, pos, callback)
+    local b = make("TextButton", parent, {
+        Size = size,
+        Position = pos,
+        BackgroundColor3 = C.card,
+        Text = value,
+        TextColor3 = C.white,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        AutoButtonColor = true
+    })
+    round(b, 7)
+    b.Activated:Connect(callback or function() end)
+    return b
+end
+
+local function card(parent, title, height)
+    local f = make("Frame", parent, {
+        Size = UDim2.new(1,-4,0,height),
+        BackgroundColor3 = C.panel,
+        BorderSizePixel = 0
+    })
+    round(f, 9)
+    label(f, title, UDim2.new(1,-16,0,24),
+        UDim2.fromOffset(8,4), 13)
+    return f
+end
+
+local gui = make("ScreenGui", PG, {
+    Name = "QuilTab",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = 50
+})
+
+local main = make("Frame", gui, {
+    Name = "Main",
+    Size = UDim2.new(0.93,0,0.82,0),
+    Position = UDim2.new(0.035,0,0.09,0),
+    BackgroundColor3 = C.bg,
+    BorderSizePixel = 0,
+    ClipsDescendants = true
+})
+round(main, 13)
+
+make("UISizeConstraint", main, {
+    MinSize = Vector2.new(315,350),
+    MaxSize = Vector2.new(950,700)
+})
+
+local header = make("Frame", main, {
+    Size = UDim2.new(1,0,0,52),
+    BackgroundColor3 = C.panel,
+    BorderSizePixel = 0
+})
+
+label(header, "Q", UDim2.fromOffset(30,40),
+    UDim2.fromOffset(12,5), 25, C.bright)
+label(header, "QuilTab", UDim2.fromOffset(120,24),
+    UDim2.fromOffset(48,5), 19)
+label(header, "SMART PLAYER DASHBOARD",
+    UDim2.fromOffset(170,15),
+    UDim2.fromOffset(49,28), 9, C.muted)
+
+local status = label(header, "● LIVE",
+    UDim2.fromOffset(60,25),
+    UDim2.new(1,-100,0,12), 10, C.green)
+status.TextXAlignment = Enum.TextXAlignment.Right
+
+local restore = button(gui, "Q",
+    UDim2.fromOffset(52,52),
+    UDim2.new(1,-65,0.72,0), function()
+        main.Visible = true
+        restore.Visible = false
+    end)
+restore.Visible = false
+restore.TextSize = 22
+restore.BackgroundColor3 = C.red
+round(restore,100)
+
+button(header,"X",UDim2.fromOffset(30,30),
+    UDim2.new(1,-37,0,10),function()
+        main.Visible = false
+        restore.Visible = true
+    end).BackgroundColor3 = C.red
+
+local sidebar = make("Frame",main,{
+    Position = UDim2.fromOffset(0,52),
+    Size = UDim2.new(0,108,1,-52),
+    BackgroundColor3 = C.panel,
+    BorderSizePixel = 0
+})
+
+local area = make("Frame",main,{
+    Position = UDim2.fromOffset(116,60),
+    Size = UDim2.new(1,-124,1,-68),
+    BackgroundTransparency = 1
+})
+
+local pages = {}
+local pageNames = {
+    "Ana Sayfa","Oyuncular","Karakter",
+    "ESP","Dünya","Komutlar","Ayarlar"
+}
+
+local function newPage(name)
+    local p = make("ScrollingFrame",area,{
+        Name = name,
+        Size = UDim2.fromScale(1,1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = C.red,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        CanvasSize = UDim2.new(),
+        Visible = false
+    })
+    make("UIListLayout",p,{
+        Padding = UDim.new(0,8),
+        SortOrder = Enum.SortOrder.LayoutOrder
+    })
+    pages[name] = p
+    return p
+end
+
+local function showPage(name)
+    for n,p in pairs(pages) do
+        p.Visible = n == name
+    end
+    for _,b in ipairs(sidebar:GetChildren()) do
+        if b:IsA("TextButton") then
+            b.BackgroundColor3 = b.Name == name and C.red or C.panel
+        end
+    end
+end
+
+for i,name in ipairs(pageNames) do
+    local b = button(sidebar,name,
+        UDim2.new(1,-8,0,33),
+        UDim2.fromOffset(4,8+(i-1)*39),function()
+            showPage(name)
+        end)
+    b.Name = name
+    b.TextXAlignment = Enum.TextXAlignment.Left
+    b.Text = " "..name
+    b.TextSize = 10
+    b.BackgroundColor3 = C.panel
+end
+
+local home = newPage("Ana Sayfa")
+local people = newPage("Oyuncular")
+local character = newPage("Karakter")
+local espPage = newPage("ESP")
+local worldPage = newPage("Dünya")
+local commandPage = newPage("Komutlar")
+local settings = newPage("Ayarlar")
+
+-- HOME: live game statistics
+card(home,"Oyun Bilgileri",95)
+local gameInfo = home:GetChildren()[1]
+label(gameInfo,"Oyun: "..game.Name,
+    UDim2.new(1,-16,0,20),UDim2.fromOffset(8,30),11,C.muted)
+label(gameInfo,"PlaceId: "..tostring(game.PlaceId),
+    UDim2.new(1,-16,0,20),UDim2.fromOffset(8,52),11,C.muted)
+label(gameInfo,"Oyuncu: "..LP.Name,
+    UDim2.new(1,-16,0,20),UDim2.fromOffset(8,72),11,C.muted)
+
+local statsCard = card(home,"Canlı İstatistikler",105)
+local statsText = label(statsCard,"Oyuncular: --\nFPS: --\nPing: --",
+    UDim2.new(1,-16,0,70),UDim2.fromOffset(8,30),12,C.green)
+
+local myCard = card(home,"Karakter Durumu",100)
+local myInfo = label(myCard,"Karakter yükleniyor...",
+    UDim2.new(1,-16,0,65),UDim2.fromOffset(8,29),11,C.muted)
+
+-- PLAYER PAGE
+local search = make("TextBox",people,{
+    Size = UDim2.new(1,-4,0,34),
+    BackgroundColor3 = C.panel,
+    Text = "",
+    PlaceholderText = "Oyuncu ara...",
+    PlaceholderColor3 = C.muted,
+    TextColor3 = C.white,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    ClearTextOnFocus = false
+})
+round(search,8)
+
+local selectedCard = card(people,"Seçili Oyuncu",155)
+local selectedInfo = label(selectedCard,
+    "Listeden bir oyuncu seç.",
+    UDim2.new(1,-16,0,120),
+    UDim2.fromOffset(8,30),11,C.muted)
+
+local listTitle = card(people,"Sunucudaki Oyuncular",35)
+local rowsHolder = make("Frame",people,{
+    Size = UDim2.new(1,-4,0,0),
+    BackgroundTransparency = 1,
+    AutomaticSize = Enum.AutomaticSize.Y
+})
+local rowsLayout = make("UIListLayout",rowsHolder,{
+    Padding = UDim.new(0,6),
+    SortOrder = Enum.SortOrder.Name
+})
+
+local function getCharacterInfo(p)
+    local ch = p.Character
+    if not ch then return "Karakter henüz yüklenmedi" end
+
+    local hum = ch:FindFirstChildOfClass("Humanoid")
+    local root = ch:FindFirstChild("HumanoidRootPart")
+    local head = ch:FindFirstChild("Head")
+
+    local result = {}
+    table.insert(result,"Kullanıcı adı: @"..p.Name)
+    table.insert(result,"DisplayName: "..p.DisplayName)
+    table.insert(result,"UserId: "..p.UserId)
+    table.insert(result,"Takım: "..(p.Team and p.Team.Name or "Yok"))
+    table.insert(result,"Karakter: "..ch.Name)
+
+    if hum then
+        table.insert(result,string.format(
+            "Can: %.0f / %.0f",hum.Health,hum.MaxHealth))
+        table.insert(result,"Hareket: "..hum:GetState().Name)
+        table.insert(result,"Hız: "..string.format("%.1f",hum.WalkSpeed))
+        table.insert(result,"Zıplama: "..string.format("%.1f",hum.JumpPower))
+    else
+        table.insert(result,"Humanoid: Bulunamadı")
+    end
+
+    if root then
+        local pos = root.Position
+        table.insert(result,string.format(
+            "Konum: %.1f, %.1f, %.1f",pos.X,pos.Y,pos.Z))
+
+        local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        if myRoot then
+            table.insert(result,string.format(
+                "Mesafe: %.1f studs",(myRoot.Position-pos).Magnitude))
+        end
+    end
+
+    table.insert(result,"Kafa: "..(head and "Mevcut" or "Yüklenmedi"))
+    return table.concat(result,"\n")
+end
+
+local function updateSelected()
+    if selectedPlayer and selectedPlayer.Parent == Players then
+        selectedInfo.Text = getCharacterInfo(selectedPlayer)
+    else
+        selectedInfo.Text = "Listeden bir oyuncu seç."
+    end
+end
+
+local function refreshPlayers()
+    for _,row in pairs(playerRows) do
+        row:Destroy()
+    end
+    table.clear(playerRows)
+
+    local query = string.lower(search.Text)
+    local all = Players:GetPlayers()
+    table.sort(all,function(a,b)
+        return a.Name:lower() < b.Name:lower()
+    end)
+
+    for _,p in ipairs(all) do
+        if string.find(p.Name:lower(),query,1,true)
+        or string.find(p.DisplayName:lower(),query,1,true) then
+
+            local row = make("TextButton",rowsHolder,{
+                Name = p.Name,
+                Size = UDim2.new(1,0,0,66),
+                BackgroundColor3 = p == selectedPlayer and C.red or C.panel,
+                Text = "",
+                AutoButtonColor = true
+            })
+            round(row,8)
+            playerRows[p] = row
+
+            local avatar = make("ImageLabel",row,{
+                Size = UDim2.fromOffset(46,46),
+                Position = UDim2.fromOffset(8,10),
+                BackgroundColor3 = C.card,
+                Image = ""
+            })
+            round(avatar,100)
+
+            task.spawn(function()
+                local ok,img = pcall(function()
+                    return Players:GetUserThumbnailAsync(
+                        p.UserId,
+                        Enum.ThumbnailType.HeadShot,
+                        Enum.ThumbnailSize.Size100x100)
+                end)
+                if ok and avatar.Parent then avatar.Image = img end
+            end)
+
+            label(row,p.DisplayName,
+                UDim2.new(1,-68,0,20),
+                UDim2.fromOffset(62,7),12)
+            label(row,"@"..p.Name,
+                UDim2.new(1,-68,0,18),
+                UDim2.fromOffset(62,27),10,C.muted)
+
+            local hum = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+            local hp = hum and string.format("Can %.0f/%.0f",hum.Health,hum.MaxHealth)
+                or "Karakter bekleniyor"
+            label(row,hp,
+                UDim2.new(1,-68,0,16),
+                UDim2.fromOffset(62,45),9,
+                hum and (hum.Health > 0 and C.green or C.bright) or C.muted)
+
+            row.Activated:Connect(function()
+                selectedPlayer = p
+                refreshPlayers()
+                updateSelected()
+            end)
+        end
+    end
+end
+
+search:GetPropertyChangedSignal("Text"):Connect(refreshPlayers)
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(0.4)
+        refreshPlayers()
+    end)
+    refreshPlayers()
+end)
+Players.PlayerRemoving:Connect(function(p)
+    if selectedPlayer == p then selectedPlayer = nil end
+    refreshPlayers()
+    updateSelected()
+end)
+
+-- CHARACTER SETTINGS
+local speedCard = card(character,"Yürüme Hızı",78)
+local speedBox = make("TextBox",speedCard,{
+    Size = UDim2.new(0.55,0,0,30),
+    Position = UDim2.fromOffset(8,39),
+    BackgroundColor3 = C.card,
+    Text = "16",
+    TextColor3 = C.white,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    ClearTextOnFocus = false
+})
+round(speedBox,6)
+
+button(speedCard,"Uygula",
+    UDim2.new(0.32,0,0,30),
+    UDim2.new(0.65,0,0,39),function()
+        local n = tonumber(speedBox.Text)
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if n and hum then hum.WalkSpeed = math.clamp(n,0,100) end
+    end)
+
+local jumpCard = card(character,"Zıplama Gücü",78)
+local jumpBox = make("TextBox",jumpCard,{
+    Size = UDim2.new(0.55,0,0,30),
+    Position = UDim2.fromOffset(8,39),
+    BackgroundColor3 = C.card,
+    Text = "50",
+    TextColor3 = C.white,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    ClearTextOnFocus = false
+})
+round(jumpBox,6)
+
+button(jumpCard,"Uygula",
+    UDim2.new(0.32,0,0,30),
+    UDim2.new(0.65,0,0,39),function()
+        local n = tonumber(jumpBox.Text)
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if n and hum then
+            hum.UseJumpPower = true
+            hum.JumpPower = math.clamp(n,0,150)
+        end
+    end)
+
+local jumpCard2 = card(character,"Sonsuz Zıplama",48)
+local jumpToggle = button(jumpCard2,"Kapalı",
+    UDim2.new(1,-16,0,27),UDim2.fromOffset(8,17),function()
+        infiniteJump = not infiniteJump
+        jumpToggle.Text = infiniteJump and "Açık" or "Kapalı"
+        jumpToggle.BackgroundColor3 = infiniteJump and C.red or C.card
+    end)
+
+UIS.JumpRequest:Connect(function()
+    if not infiniteJump then return end
+    local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+    if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+end)
+
+-- ESP: labels on accessible characters
+local espCard = card(espPage,"Oyuncu Etiketleri",55)
+local espToggle = button(espCard,"Kapalı",
+    UDim2.new(1,-16,0,30),UDim2.fromOffset(8,19),function()
+        espEnabled = not espEnabled
+        espToggle.Text = espEnabled and "Açık" or "Kapalı"
+        espToggle.BackgroundColor3 = espEnabled and C.red or C.card
+    end)
+
+local function clearTags()
+    for p,tag in pairs(espTags) do
+        if tag then tag:Destroy() end
+        espTags[p] = nil
+    end
+end
+
+local function refreshTags()
+    clearTags()
+    if not espEnabled then return end
+
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character then
+            local head = p.Character:FindFirstChild("Head")
+            if head then
+                local tag = make("BillboardGui",head,{
+                    Name = "QuilTabPlayerTag",
+                    Size = UDim2.fromOffset(180,48),
+                    StudsOffset = Vector3.new(0,2.8,0),
+                    AlwaysOnTop = true
+                })
+                local txt = make("TextLabel",tag,{
+                    Size = UDim2.fromScale(1,1),
+                    BackgroundTransparency = 1,
+                    Text = p.DisplayName,
+                    TextColor3 = C.bright,
+                    TextStrokeTransparency = 0.25,
+                    Font = Enum.Font.GothamBold,
+                    TextSize = 13
+                })
+                espTags[p] = tag
+            end
+        end
+    end
+end
+
+-- TELEPORT UTILITIES
+local tpInput = make("TextLabel",teleport,{
+    Size = UDim2.new(1,-4,0,35),
+    BackgroundColor3 = C.panel,
+    Text = "Oyuncuyu Oyuncular sekmesinden seç.",
+    TextColor3 = C.muted,
+    Font = Enum.Font.Gotham,
+    TextSize = 11
+})
+round(tpInput,8)
+
+button(teleport,"Önceki Konumu Kaydet",
+    UDim2.new(1,-4,0,34),UDim2.new(),function()
+        local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        if root then previousPosition = root.CFrame end
+    end)
+
+button(teleport,"Seçili Oyuncuya Git",
+    UDim2.new(1,-4,0,34),UDim2.new(),function()
+        local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        local targetRoot = selectedPlayer and selectedPlayer.Character
+            and selectedPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root and targetRoot then
+            previousPosition = root.CFrame
+            root.CFrame = targetRoot.CFrame * CFrame.new(0,0,4)
+        end
+    end)
+
+button(teleport,"Önceki Konuma Dön",
+    UDim2.new(1,-4,0,34),UDim2.new(),function()
+        local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        if root and previousPosition then root.CFrame = previousPosition end
+    end)
+
+-- WORLD INSPECTOR
+local worldInfo = card(worldPage,"Dünya Bilgileri",100)
+local worldText = label(worldInfo,"Nesneler taranıyor...",
+    UDim2.new(1,-16,0,70),UDim2.fromOffset(8,28),11,C.muted)
+
+local function inspectWorld()
+    local counts = {}
+    local total = 0
+    for _,obj in ipairs(Workspace:GetDescendants()) do
+        total += 1
+        counts[obj.ClassName] = (counts[obj.ClassName] or 0) + 1
+    end
+
+    local lines = {
+        "Toplam erişilebilir nesne: "..total,
+        "Parça (Part): "..(counts.Part or 0),
+        "MeshPart: "..(counts.MeshPart or 0),
+        "Model: "..(counts.Model or 0),
+        "Script: "..((counts.Script or 0)+(counts.LocalScript or 0))
+    }
+    worldText.Text = table.concat(lines,"\n")
+end
+
+button(worldPage,"Dünyayı Yeniden Tara",
+    UDim2.new(1,-4,0,32),UDim2.new(),inspectWorld)
+
+-- COMMAND CONSOLE
+local cmdBox = make("TextBox",commandPage,{
+    Size = UDim2.new(1,-4,0,35),
+    BackgroundColor3 = C.panel,
+    Text = "",
+    PlaceholderText = "help / reset / speed 24 / jump 50",
+    PlaceholderColor3 = C.muted,
+    TextColor3 = C.white,
+    Font = Enum.Font.Code,
+    TextSize = 11,
+    ClearTextOnFocus = false
+})
+round(cmdBox,8)
+
+local cmdOutput = make("TextLabel",commandPage,{
+    Size = UDim2.new(1,-4,0,125),
+    BackgroundColor3 = C.panel,
+    Text = "QuilTab konsolu hazır.\nhelp yaz.",
+    TextColor3 = C.green,
+    Font = Enum.Font.Code,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true
+})
+round(cmdOutput,8)
+
+local function execute(raw)
+    table.insert(history,raw)
+    local a = string.split(raw," ")
+    local cmd = string.lower(a[1] or "")
+
+    if cmd == "help" then
+        cmdOutput.Text = "Komutlar:\nhelp\nreset\nspeed 24\njump 50\nplayers\nclear"
+    elseif cmd == "clear" then
+        cmdOutput.Text = "Konsol temizlendi."
+    elseif cmd == "reset" then
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.Health = 0 end
+        cmdOutput.Text = "Karakter sıfırlama istendi."
+    elseif cmd == "speed" then
+        local n = tonumber(a[2])
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if n and hum then
+            hum.WalkSpeed = math.clamp(n,0,100)
+            cmdOutput.Text = "Hız: "..hum.WalkSpeed
+        else
+            cmdOutput.Text = "Kullanım: speed 24"
+        end
+    elseif cmd == "jump" then
+        local n = tonumber(a[2])
+        local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+        if n and hum then
+            hum.UseJumpPower = true
+            hum.JumpPower = math.clamp(n,0,150)
+            cmdOutput.Text = "Zıplama: "..hum.JumpPower
+        else
+            cmdOutput.Text = "Kullanım: jump 50"
+        end
+    elseif cmd == "players" then
+        local names = {}
+        for _,p in ipairs(Players:GetPlayers()) do
+            table.insert(names,p.Name)
+        end
+        cmdOutput.Text = table.concat(names,"\n")
+    else
+        cmdOutput.Text = "Bilinmeyen komut: "..cmd
+    end
+end
+
+button(commandPage,"Çalıştır",
+    UDim2.new(1,-4,0,32),UDim2.new(),function()
+        if cmdBox.Text ~= "" then
+            execute(cmdBox.Text)
+            cmdBox.Text = ""
+        end
+    end)
+
+cmdBox.FocusLost:Connect(function(enter)
+    if enter and cmdBox.Text ~= "" then
+        execute(cmdBox.Text)
+        cmdBox.Text = ""
+    end
+end)
+
+-- SETTINGS
+local setCard = card(settings,"Arayüz Ayarları",55)
+button(setCard,"Küçült",
+    UDim2.new(0.48,-8,0,30),UDim2.fromOffset(8,19),function()
+        main.Size = UDim2.new(0.76,0,0.72,0)
+        main.Position = UDim2.new(0.12,0,0.14,0)
+    end)
+button(setCard,"Varsayılan",
+    UDim2.new(0.48,-8,0,30),UDim2.new(0.52,0,0,19),function()
+        main.Size = UDim2.new(0.93,0,0.82,0)
+        main.Position = UDim2.new(0.035,0,0.09,0)
+    end)
+
+-- Drag window
+local dragging, dragStart, startPos = false,nil,nil
+
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+        main.Position = UDim2.new(
+            startPos.X.Scale,startPos.X.Offset+delta.X,
+            startPos.Y.Scale,startPos.Y.Offset+delta.Y)
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+UIS.InputBegan:Connect(function(input,processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.RightControl then
+        main.Visible = not main.Visible
+        restore.Visible = not main.Visible
+    end
+end)
+
+-- Live updates
+local refreshClock = 0
+RunService.RenderStepped:Connect(function(dt)
+    if not alive then return end
+
+    frameCount += 1
+    frameTime += dt
+    refreshClock += dt
+
+    if frameTime >= 1 then
+        fps = math.floor(frameCount/frameTime)
+        frameCount = 0
+        frameTime = 0
+
+        local pingText = "--"
+        pcall(function()
+            pingText = tostring(math.floor(
+                Stats.Network.ServerStatsItem["Data Ping"]:GetValue())).." ms"
+        end)
+
+        statsText.Text = string.format(
+            "Oyuncular: %d\nFPS: %d\nPing: %s",
+            #Players:GetPlayers(),fps,pingText)
+
+        local ch = LP.Character
+        local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+        local root = ch and ch:FindFirstChild("HumanoidRootPart")
+
+        if hum then
+            myInfo.Text = string.format(
+                "Can: %.0f / %.0f\nHız: %.1f\nZıplama: %.1f\nDurum: %s\nKonum: %s",
+                hum.Health,hum.MaxHealth,hum.WalkSpeed,hum.JumpPower,
+                hum:GetState().Name,
+                root and tostring(root.Position) or "Yükleniyor")
+        else
+            myInfo.Text = "Karakter yükleniyor..."
+        end
+    end
+
+    if refreshClock >= 0.5 then
+        refreshClock = 0
+        updateSelected()
+        if espEnabled then refreshTags() end
+    end
+end)
+
+LP.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    infiniteJump = false
+    if jumpToggle.Parent then
+        jumpToggle.Text = "Kapalı"
+        jumpToggle.BackgroundColor3 = C.card
+    end
+    refreshPlayers()
+end)
+
+refreshPlayers()
+inspectWorld()
+showPage("Ana Sayfa")
+
+print("QuilTab Smart Dashboard loaded.")
